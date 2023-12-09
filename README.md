@@ -327,3 +327,132 @@ networks:
   default:
     name: airflow-network
 ```
+then we will use Sensors Operators like HTTP to check whether the forex rates are available:
+    
+```python
+ is_forex_rates_available = HttpSensor(
+        task_id="is_forex_rates_available",
+        http_conn_id="forex_api",
+        endpoint="/megra/f45f872de4dfd3eaa015a4a1af4b39b",
+        response_check=lambda response: "rates" in response.text,
+        poke_interval=5,
+        timeout=20
+    )
+```
+
+then we will use file operator to check for the availability of the file 
+
+```python
+ is_forex_currencies_file_available = FileSensor(
+            task_id="is_forex_currencies_file_available",
+            fs_conn_id="forex_path",
+            filepath="forex_currencies.csv",
+            poke_interval=5,
+            timeout=20
+    )
+
+after checking the forex file we will need to create a function to download it
+
+```python
+def download_rates():
+    with open('/usr/local/airflow/dags/files/forex_currencies.csv') as forex_currencies:
+        reader = csv.DictReader(forex_currencies, delimiter=';')
+        for row in reader:
+            base = row['base']
+            with_pairs = row['with_pairs'].split(' ')
+            indata = requests.get('https://api.exchangeratesapi.io/latest?base=' + base).json()
+            outdata = {'base': base, 'rates': {}, 'last_update': indata['date']}
+            for pair in with_pairs:
+                outdata['rates'][pair] = indata['rates'][pair]
+            with open('/usr/local/airflow/dags/files/forex_rates.json', 'a') as outfile:
+                json.dump(outdata, outfile)
+                outfile.write('\n')
+```
+then use the python operator to execute this task(download_function)
+```python
+ downloading_rates = PythonOperator(
+            task_id="downloading_rates",
+            python_callable=download_rates
+    )
+```
+Now we need to save our data into HDFS
+so we will use the bash operator to save it
+```python
+saving_rates = BashOperator(
+        task_id="saving_rates",
+        bash_command="""
+            hdfs dfs -mkdir -p /forex && \
+            hdfs dfs -put -f $AIRFLOW_HOME/dags/files/forex_rates.json /forex
+            """
+    )
+
+```
+then we will need the hive Operator to interact with the data and perform queries on it 
+```python
+ creating_forex_rates_table = HiveOperator(
+        task_id="creating_forex_rates_table",
+        hive_cli_conn_id="hive_conn",
+        hql="""
+            CREATE EXTERNAL TABLE IF NOT EXISTS forex_rates(
+                base STRING,
+                last_update DATE,
+                eur DOUBLE,
+                usd DOUBLE,
+                nzd DOUBLE,
+                gbp DOUBLE,
+                jpy DOUBLE,
+                cad DOUBLE
+                )
+            ROW FORMAT DELIMITED
+            FIELDS TERMINATED BY ','
+            STORED AS TEXTFILE
+        """
+    )
+```
+
+Then i used the Spark Operator to process the data
+```python
+forex_processing = SparkSubmitOperator(
+        task_id="forex_processing",
+        conn_id="spark_conn",
+        application="\mnt\airflow\dags\scripts\forex_processing.py",
+        verbose=False
+    )
+```
+and here is the spark transformation i did 
+```python
+from os.path import expanduser, join, abspath
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import from_json
+
+warehouse_location = abspath('spark-warehouse')
+
+# Initialize Spark Session
+spark = SparkSession \
+    .builder \
+    .appName("Forex processing") \
+    .config("spark.sql.warehouse.dir", warehouse_location) \
+    .enableHiveSupport() \
+    .getOrCreate()
+
+# Read the file forex_rates.json from the HDFS
+df = spark.read.json('hdfs://namenode:9000/forex/forex_rates.json')
+
+# Drop the duplicated rows based on the base and last_update columns
+forex_rates = df.select('base', 'last_update', 'rates.eur', 'rates.usd', 'rates.cad', 'rates.gbp', 'rates.jpy', 'rates.nzd') \
+    .dropDuplicates(['base', 'last_update']) \
+    .fillna(0, subset=['EUR', 'USD', 'JPY', 'CAD', 'GBP', 'NZD'])
+
+# Export the dataframe into the Hive table forex_rates
+forex_rates.write.mode("append").insertInto("forex_rates")
+```
+
+And Finally here is my Dag representation 
+
+
+
+![1_ARMaj-raY2VXToTDl0IhBA](https://github.com/MohamedMagdyyyy/The-Forex-Data-Pipeline-using-Airflow/assets/153362625/9ece27fd-4f82-444e-b3e0-2965d4913b83)
+
+
+
