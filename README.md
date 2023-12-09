@@ -447,7 +447,11 @@ forex_rates = df.select('base', 'last_update', 'rates.eur', 'rates.usd', 'rates.
 # Export the dataframe into the Hive table forex_rates
 forex_rates.write.mode("append").insertInto("forex_rates")
 ```
-
+then execute the tasks in order
+```python
+is_forex_rates_available >> is_forex_currencies_file_available >> downloading_rates >> saving_rates
+    saving_rates >> creating_forex_rates_table >> forex_processing 
+```
 And Finally here is my Dag representation 
 
 
