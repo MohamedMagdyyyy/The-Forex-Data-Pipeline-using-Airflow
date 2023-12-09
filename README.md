@@ -31,7 +31,7 @@ default_args = {
     "retry_delay": timedelta(minutes=5)
 }
 
-with DAG("forex_data_pipeline", start_date=datetime(2021, 1 ,1), 
+with DAG("forex_data_pipeline", start_date=datetime(2023, 12 ,9), 
     schedule_interval="@daily", default_args=default_args, catchup=False) as dag:
     None
 ```
@@ -452,11 +452,9 @@ then execute the tasks in order
 is_forex_rates_available >> is_forex_currencies_file_available >> downloading_rates >> saving_rates
     saving_rates >> creating_forex_rates_table >> forex_processing 
 ```
-And Finally here is my Dag representation 
 
 
 
-![1_ARMaj-raY2VXToTDl0IhBA](https://github.com/MohamedMagdyyyy/The-Forex-Data-Pipeline-using-Airflow/assets/153362625/9ece27fd-4f82-444e-b3e0-2965d4913b83)
 
 
 
